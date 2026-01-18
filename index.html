@@ -1731,3 +1731,436 @@ input:focus, select:focus, textarea:focus {
         
         appState.orders.forEach(order => {
             serviceCounts[order.service.acType] = (serviceCounts[order.service.acType] ||
+                                                           // ==================== AUTHENTICATION ====================
+        function switchRole(role) {
+            // Hide all sections
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            
+            // Update role buttons
+            document.querySelectorAll('.role-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected section
+            let sectionId;
+            switch(role) {
+                case 'customer':
+                    sectionId = 'customer-section';
+                    break;
+                case 'technician':
+                    sectionId = 'technician-section';
+                    // Reset technician form
+                    document.getElementById('technician-login-form').classList.remove('hidden');
+                    document.getElementById('technician-dashboard').classList.add('hidden');
+                    break;
+                case 'admin':
+                    sectionId = 'admin-login-section';
+                    break;
+            }
+            
+            document.getElementById(sectionId).classList.add('active');
+            document.querySelector(`[data-role="${role}"]`).classList.add('active');
+            
+            appState.userRole = role;
+        }
+
+        function adminLogin() {
+            const password = document.getElementById('admin-password').value;
+            
+            if (password === appState.settings.adminPassword) {
+                appState.authenticated = true;
+                appState.currentUser = { role: 'admin' };
+                
+                // Switch to admin dashboard
+                document.getElementById('admin-login-section').classList.remove('active');
+                document.getElementById('admin-dashboard-section').classList.remove('hidden');
+                document.getElementById('admin-dashboard-section').classList.add('active');
+                
+                // Update role button
+                document.querySelectorAll('.role-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelector('[data-role="admin"]').classList.add('active');
+                
+                // Load admin data
+                loadAdminData();
+                showNotification('Login admin berhasil!', 'success');
+            } else {
+                showNotification('Password admin salah!', 'error');
+            }
+        }
+
+        function technicianLogin() {
+            const id = document.getElementById('tech-id').value.trim();
+            const password = document.getElementById('tech-password').value;
+            
+            const technician = appState.technicians.find(tech => 
+                tech.id === id && tech.password === password && tech.active
+            );
+            
+            if (technician) {
+                appState.authenticated = true;
+                appState.currentUser = technician;
+                
+                // Show dashboard
+                document.getElementById('technician-login-form').classList.add('hidden');
+                document.getElementById('technician-dashboard').classList.remove('hidden');
+                document.getElementById('tech-greeting').textContent = technician.name;
+                
+                // Load technician's jobs
+                loadTechnicianJobs(id);
+                showNotification(`Selamat bekerja, ${technician.name}!`, 'success');
+            } else {
+                showNotification('ID atau password salah!', 'error');
+            }
+        }
+
+        function logout() {
+            appState.authenticated = false;
+            appState.currentUser = null;
+            switchRole('customer');
+            showNotification('Anda telah logout', 'info');
+        }
+
+        // ==================== ADMIN FUNCTIONS ====================
+        function loadAdminData() {
+            loadPricingEditor();
+            updateAnalytics();
+            loadOrdersList();
+            loadTechniciansList();
+        }
+
+        function loadOrdersList() {
+            const container = document.getElementById('orders-list');
+            container.innerHTML = '';
+            
+            // Sort orders by date (newest first)
+            const sortedOrders = [...appState.orders].sort((a, b) => 
+                new Date(b.date) - new Date(a.date)
+            );
+            
+            sortedOrders.forEach(order => {
+                const orderDate = new Date(order.date).toLocaleDateString('id-ID');
+                const statusClass = `status-${order.status}`;
+                
+                const orderElement = document.createElement('div');
+                orderElement.className = 'job-item';
+                orderElement.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div>
+                            <strong>${order.id}</strong><br>
+                            <small>${order.customer.name} - ${order.customer.phone}</small><br>
+                            <small>${orderDate} • ${order.service.acType.toUpperCase()} ${order.service.pk}PK</small>
+                        </div>
+                        <div style="text-align: right;">
+                            <span class="job-status ${statusClass}">${order.status.toUpperCase()}</span><br>
+                            <strong>${formatCurrency(order.price)}</strong>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; display: flex; gap: 5px;">
+                        <button class="btn btn-sm" onclick="editOrder('${order.id}')">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteOrder('${order.id}')">
+                            <i class="fas fa-trash"></i> Hapus
+                        </button>
+                    </div>
+                `;
+                container.appendChild(orderElement);
+            });
+            
+            if (sortedOrders.length === 0) {
+                container.innerHTML = '<p class="text-center">Belum ada order</p>';
+            }
+        }
+
+        function loadTechniciansList() {
+            const container = document.getElementById('technicians-list');
+            container.innerHTML = '';
+            
+            appState.technicians.forEach(tech => {
+                const techElement = document.createElement('div');
+                techElement.className = 'technician-item';
+                techElement.innerHTML = `
+                    <div>
+                        <strong>${tech.id}</strong> - ${tech.name}<br>
+                        <small>Status: ${tech.active ? 'Aktif' : 'Nonaktif'}</small>
+                    </div>
+                    <div>
+                        <button class="btn btn-sm" onclick="resetTechPassword('${tech.id}')">
+                            <i class="fas fa-key"></i> Reset Password
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteTechnician('${tech.id}')">
+                            <i class="fas fa-trash"></i> Hapus
+                        </button>
+                    </div>
+                `;
+                container.appendChild(techElement);
+            });
+        }
+
+        function addTechnician() {
+            const name = document.getElementById('new-tech-name').value.trim();
+            const id = document.getElementById('new-tech-id').value.trim();
+            const password = document.getElementById('new-tech-password').value.trim();
+            
+            if (!name || !id || !password) {
+                showNotification('Harap isi semua data teknisi!', 'error');
+                return;
+            }
+            
+            // Check if ID already exists
+            if (appState.technicians.some(tech => tech.id === id)) {
+                showNotification('ID teknisi sudah ada!', 'error');
+                return;
+            }
+            
+            const newTech = {
+                id: id,
+                name: name,
+                password: password,
+                active: true,
+                joinDate: new Date().toISOString().split('T')[0]
+            };
+            
+            appState.technicians.push(newTech);
+            saveToStorage();
+            loadTechniciansList();
+            
+            // Clear form
+            document.getElementById('new-tech-name').value = '';
+            document.getElementById('new-tech-id').value = '';
+            document.getElementById('new-tech-password').value = '';
+            
+            showNotification(`Teknisi ${name} berhasil ditambahkan!`, 'success');
+        }
+
+        function resetTechPassword(techId) {
+            const newPassword = prompt(`Masukkan password baru untuk ${techId}:`, 'tech' + Math.floor(Math.random() * 1000));
+            if (newPassword) {
+                const tech = appState.technicians.find(t => t.id === techId);
+                if (tech) {
+                    tech.password = newPassword;
+                    saveToStorage();
+                    showNotification(`Password ${techId} berhasil direset!`, 'success');
+                }
+            }
+        }
+
+        function deleteTechnician(techId) {
+            if (confirm(`Yakin ingin menghapus teknisi ${techId}?`)) {
+                appState.technicians = appState.technicians.filter(t => t.id !== techId);
+                saveToStorage();
+                loadTechniciansList();
+                showNotification(`Teknisi ${techId} berhasil dihapus!`, 'success');
+            }
+        }
+
+        function editOrder(orderId) {
+            const order = appState.orders.find(o => o.id === orderId);
+            if (!order) return;
+            
+            const content = `
+                <div class="form-group">
+                    <label>Status Order</label>
+                    <select id="edit-order-status" class="form-control">
+                        <option value="pending" ${order.status === 'pending' ? 'selected' : ''}>Pending</option>
+                        <option value="confirmed" ${order.status === 'confirmed' ? 'selected' : ''}>Confirmed</option>
+                        <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>Completed</option>
+                        <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Assign to Technician</label>
+                    <select id="edit-order-tech" class="form-control">
+                        <option value="">-- Pilih Teknisi --</option>
+                        ${appState.technicians.filter(t => t.active).map(t => 
+                            `<option value="${t.id}" ${order.assignedTo === t.id ? 'selected' : ''}>${t.name} (${t.id})</option>`
+                        ).join('')}
+                    </select>
+                </div>
+            `;
+            
+            const buttons = [
+                {
+                    text: 'Simpan',
+                    class: 'btn-primary',
+                    action: () => {
+                        order.status = document.getElementById('edit-order-status').value;
+                        order.assignedTo = document.getElementById('edit-order-tech').value || null;
+                        if (order.status === 'completed') {
+                            order.completedDate = new Date().toISOString();
+                        }
+                        saveToStorage();
+                        loadOrdersList();
+                        updateAnalytics();
+                        hideModal();
+                        showNotification('Order berhasil diperbarui!', 'success');
+                    }
+                },
+                {
+                    text: 'Batal',
+                    class: 'btn-secondary',
+                    action: hideModal
+                }
+            ];
+            
+            showModal(`Edit Order ${orderId}`, content, buttons);
+        }
+
+        function deleteOrder(orderId) {
+            if (confirm(`Yakin ingin menghapus order ${orderId}?`)) {
+                appState.orders = appState.orders.filter(o => o.id !== orderId);
+                saveToStorage();
+                loadOrdersList();
+                updateAnalytics();
+                showNotification(`Order ${orderId} berhasil dihapus!`, 'success');
+            }
+        }
+
+        function loadTechnicianJobs(techId) {
+            const container = document.getElementById('technician-jobs');
+            container.innerHTML = '';
+            
+            const techOrders = appState.orders.filter(order => 
+                order.assignedTo === techId && order.status !== 'completed' && order.status !== 'cancelled'
+            );
+            
+            if (techOrders.length === 0) {
+                container.innerHTML = '<p class="text-center">Tidak ada tugas saat ini</p>';
+                return;
+            }
+            
+            techOrders.forEach(order => {
+                const orderDate = new Date(order.date).toLocaleDateString('id-ID');
+                const orderElement = document.createElement('div');
+                orderElement.className = 'job-item';
+                orderElement.innerHTML = `
+                    <strong>${order.id}</strong><br>
+                    <small>${order.customer.name}</small><br>
+                    <small>${orderDate} • ${order.service.acType.toUpperCase()} ${order.service.pk}PK</small><br>
+                    <small>${order.customer.address}</small><br>
+                    <span class="job-status status-${order.status}">${order.status.toUpperCase()}</span>
+                    <div style="margin-top: 10px;">
+                        <button class="btn btn-sm" onclick="updateJobStatus('${order.id}', 'progress')">
+                            <i class="fas fa-play"></i> Mulai
+                        </button>
+                        <button class="btn btn-sm btn-success" onclick="updateJobStatus('${order.id}', 'completed')">
+                            <i class="fas fa-check"></i> Selesai
+                        </button>
+                    </div>
+                `;
+                container.appendChild(orderElement);
+            });
+        }
+
+        function updateJobStatus(orderId, status) {
+            const order = appState.orders.find(o => o.id === orderId);
+            if (order) {
+                order.status = status;
+                if (status === 'completed') {
+                    order.completedDate = new Date().toISOString();
+                }
+                saveToStorage();
+                loadTechnicianJobs(appState.currentUser.id);
+                showNotification(`Status order ${orderId} diperbarui!`, 'success');
+            }
+        }
+
+        // ==================== EVENT LISTENERS ====================
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load saved data
+            loadFromStorage();
+            
+            // Initialize price calculation
+            calculatePrice();
+            
+            // Role switching
+            document.querySelectorAll('.role-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const role = this.getAttribute('data-role');
+                    switchRole(role);
+                });
+            });
+            
+            // Price calculation triggers
+            document.getElementById('ac-type').addEventListener('change', calculatePrice);
+            document.getElementById('ac-pk').addEventListener('change', calculatePrice);
+            document.getElementById('unit-count').addEventListener('input', calculatePrice);
+            document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.addEventListener('change', calculatePrice);
+            });
+            
+            // Customer order submission
+            document.getElementById('submit-order').addEventListener('click', createOrder);
+            
+            // Technician login
+            document.getElementById('tech-login-btn').addEventListener('click', technicianLogin);
+            document.getElementById('tech-logout-btn').addEventListener('click', logout);
+            
+            // Admin login
+            document.getElementById('admin-login-btn').addEventListener('click', adminLogin);
+            document.getElementById('admin-logout-btn').addEventListener('click', logout);
+            
+            // Admin tabs
+            document.querySelectorAll('.admin-nav-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const tab = this.getAttribute('data-tab');
+                    
+                    // Update active tab
+                    document.querySelectorAll('.admin-nav-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    // Show selected tab content
+                    document.querySelectorAll('.admin-tab-content').forEach(content => {
+                        content.classList.remove('active');
+                    });
+                    document.getElementById(`${tab}-tab`).classList.add('active');
+                });
+            });
+            
+            // Admin functions
+            document.getElementById('save-pricing').addEventListener('click', savePricing);
+            document.getElementById('add-technician-btn').addEventListener('click', addTechnician);
+            
+            // Branding functions
+            document.getElementById('save-business-info').addEventListener('click', function() {
+                appState.branding.businessName = document.getElementById('edit-business-name').value;
+                appState.branding.tagline = document.getElementById('edit-business-tagline').value;
+                saveToStorage();
+                applyBranding();
+                showNotification('Business info updated!', 'success');
+            });
+            
+            document.getElementById('apply-theme-btn').addEventListener('click', function() {
+                appState.branding.colors.primary = document.getElementById('primary-color-picker').value;
+                appState.branding.colors.secondary = document.getElementById('secondary-color-picker').value;
+                appState.branding.colors.accent = document.getElementById('accent-color-picker').value;
+                saveToStorage();
+                applyBranding();
+                showNotification('Theme applied successfully!', 'success');
+            });
+            
+            // Logo upload
+            document.getElementById('upload-logo-btn').addEventListener('click', function() {
+                document.getElementById('logo-upload').click();
+            });
+            
+            document.getElementById('logo-upload').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file && file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        appState.branding.logo = event.target.result;
+                        saveToStorage();
+                        applyBranding();
+                        showNotification('Logo uploaded successfully!', 'success');
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+            
+            // Change admin password
+            document.getElementById('change-password-btn').addEventListener('click', function() {
+                const newPass = document.getElementById('new-admin-password').value;
+                const confirmPass = document
